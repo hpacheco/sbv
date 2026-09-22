@@ -1053,6 +1053,7 @@ runSolver cfg ctx execPath opts pgm continuation
                                                  , queryRetrieveResponse    = getResponseFromSolver Nothing
                                                  , queryConfig              = cfg
                                                  , queryTerminate           = cleanUp
+                                                 , queryKill                = terminateProcess pid
                                                  , queryTimeOutValue        = Nothing
                                                  , queryAssertionStackDepth = 0
                                                  }

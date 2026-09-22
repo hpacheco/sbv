@@ -132,6 +132,13 @@ Library
                   , Data.SBV.Either
                   , Data.SBV.Float
                   , Data.SBV.Internals
+                  , Data.SBV.Dynamic.KindArith
+                  , Data.SBV.Dynamic.Delayed
+                  , Data.SBV.Dynamic.Quantifiers
+                  , Data.SBV.Dynamic.Solver
+                  , Data.SBV.Dynamic.Arith
+                  , Data.SBV.Dynamic.Force
+                  , Data.SBV.Dynamic.Fun
                   , Data.SBV.List
                   , Data.SBV.Maybe
                   , Data.SBV.Rational

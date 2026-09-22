@@ -73,6 +73,7 @@ import Control.Monad.Trans         (MonadIO(liftIO), MonadTrans(lift))
 import Control.Monad.Trans.Maybe   (MaybeT)
 import Control.Monad.Writer.Strict (MonadWriter)
 import Data.IORef                  (IORef, newIORef, readIORef)
+import Data.Char                   (isDigit)
 import Data.List                   (intercalate, isPrefixOf)
 import Data.Maybe                  (fromMaybe)
 import Data.String                 (IsString(fromString))
@@ -819,6 +820,7 @@ data QueryState = QueryState { queryAsk                 :: Maybe Int -> Text -> 
                              , queryRetrieveResponse    :: Maybe Int -> IO String
                              , queryConfig              :: SMTConfig
                              , queryTerminate           :: Maybe C.SomeException -> IO ()
+                             , queryKill                :: IO ()  -- ^ hpacheco: forcefully kill query
                              , queryTimeOutValue        :: Maybe Int
                              , queryAssertionStackDepth :: !Int
                              }
@@ -1219,9 +1221,18 @@ instance NFData SMTDef where
 
 -- | Compare two SMTDef values for semantic equality.
 -- The body is @(Int -> Text)@ where @Int@ is indentation; we compare rendered output at indent 0.
+-- hpacheco: normalize away  alpha-equivalent details (parameter and let-bound names).
 smtDefEq :: SMTDef -> SMTDef -> Bool
 smtDefEq (SMTDefValue k1 refs1 params1 body1 _) (SMTDefValue k2 refs2 params2 body2 _)
-  = k1 == k2 && refs1 == refs2 && params1 == params2 && body1 0 == body2 0
+  = k1 == k2 && refs1 == refs2 && fmap norm params1 == fmap norm params2 && norm (body1 0) == norm (body2 0)
+  where
+    norm :: Text -> [Text]
+    norm = T.words . T.pack . go . T.unpack
+      where
+        go ('l':cs) | (_:_, '_':rest) <- span isDigit cs = 'l' : '_' : go rest
+                    | otherwise = 'l' : go cs
+        go (c:cs) = c : go cs
+        go [] = []
 
 -- | Error for conflicting smtFunction definitions with the same name.
 conflictError :: String -> a
@@ -2406,7 +2417,7 @@ data Solver = ABC
             | Yices
             | Z3
             | OpenSMT
-            deriving (Show, Enum, Bounded)
+            deriving (Show, Enum, Bounded, Eq) 
 
 -- | An SMT solver
 data SMTSolver = SMTSolver {
