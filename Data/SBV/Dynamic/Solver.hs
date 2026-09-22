@@ -81,8 +81,7 @@ sdRunWithState
     -> (Query SMTResult -> Query SMTResult)      -- ^ measurement hook (@id@ for none)
     -> Symbolic (SVal, st)                       -- ^ the encoding, and the state it built
     -> IO (SMTResult, st)
--- A solver whose seed we cannot set has nothing to race with: plain SBV.
-sdRunWithState isProve cfg = sdRunWithStateRace (sdSeedRace cfg) isProve cfg
+sdRunWithState isProve cfg = sdRunWithStateRace (sdSeedRace cfg) isProve (sdStripRaceOptions cfg)
 
 -- | 'sdRunWithState' over a race of solver processes: the encoding
 -- runs once, then one solver process per config tweak races on it and the
@@ -231,7 +230,7 @@ sdRunIncremental isProve cfg refine tactic measure setup loop = do
                             constrain c
                             iter st'
             iter st0
-    r <- runWithQuery reduce (not isProve) query0 cfg setup
+    r <- runWithQuery reduce (not isProve) query0 (sdStripRaceOptions cfg) setup
     stFinal <- readMVar stRef
     return (r, stFinal)
 
@@ -257,15 +256,15 @@ sdSolverConfig s         = error $ "Data.SBV.Dynamic.Solver.sdSolverConfig: unsu
 sdSeedRace :: SMTConfig -> [SMTConfig -> SMTConfig]
 sdSeedRace cfg
     | not (sdSupportsSeed $ name $ solver cfg) = [id] -- default behavior
-    | size < 2  = [sdStripRaceOptions]
+    | size < 2  = [id]
     | otherwise = map process [0 .. size - 1]
   where
     size = sdRequestedThreads cfg
-    process 0 c = sdStripRaceOptions c
-    process i c = (sdStripRaceOptions c)
-        { extraArgs  = extraArgs c ++ sdSetSeedArgs c i ++ maybe [] (sdSetMemoryCap c) (sdMemoryCap c)
-        , transcript = fmap (++ "." ++ show i) (transcript c)
-        }
+    cap  = maybe [] (sdSetMemoryCap cfg) (sdMemoryCap cfg)
+    process 0 c = c
+    process i c = c { extraArgs  = extraArgs c ++ sdSetSeedArgs c i ++ cap
+                    , transcript = fmap (++ "." ++ show i) (transcript c)
+                    }
 
 -- | How many solver processes a config allows: its solver's own parallelism
 -- options (z3: @parallel.enable@ / @parallel.threads.max@).
