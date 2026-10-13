@@ -9,6 +9,7 @@
 -----------------------------------------------------------------------------
 
 {-# LANGUAGE BangPatterns          #-}
+{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
@@ -31,7 +32,7 @@ import Data.SBV.Core.Kind       (Kind, HasKind(..))
 import Data.SBV.Core.Symbolic   (SV, SVal, Symbolic, cache, forceSVArg, svToSymSV)
 import qualified Data.SBV.Core.Symbolic as CS
 
-import Data.SBV.Dynamic.Delayed (SExprF(..))
+import Data.SBV.Dynamic.Delayed (SExprF(..), SDelayedOps, pattern SOp1, pattern SOp2, pattern SOpn)
 
 -- | Structures whose SBV content can be deep-forced inside the 'Symbolic'
 -- state.
@@ -52,7 +53,7 @@ instance SBVNFData SVal where
 instance SBVNFData SBool where
   forceSBV (SBV v) = SBV <$> forceSBV v
 
-instance SBVNFData (SExprF o1 o2 on) where
+instance SDelayedOps o1 o2 on => SBVNFData (SExprF o1 o2 on) where
   forceSBV (SConst cv) = do
     cv' <- forceSBV cv
     return $! SConst cv'

@@ -113,14 +113,18 @@ cvt ctx curProgInfo kindInfo isSat comments allInputs (_, consts) tbls uis defs 
                        || KFloat     `Set.member` kindInfo
                        || KDouble    `Set.member` kindInfo
         hasString      = KString     `Set.member` kindInfo
-        hasRegExp      = (not . null) [() | (_ :: RegExOp) <- G.universeBi allTopOps]
+        -- scans skip quantified booleans: their Text body holds no ops, and universeBi would walk it char by char
+        scannedOps     = [o | o <- allTopOps, not (isQuantifiedBool o)]
+        isQuantifiedBool QuantifiedBool{} = True
+        isQuantifiedBool _                = False
+        hasRegExp      = (not . null) [() | (_ :: RegExOp) <- G.universeBi scannedOps]
         hasChar        = KChar      `Set.member` kindInfo
         hasRounding    = any isRoundingMode allKinds
         hasBVs         = not (null [() | KBounded{} <- allKinds])
         adtsNoRM       = [(s, ps, cs) | k@(KADT s ps cs) <- allKinds, not (isRoundingMode k)]
         tupleArities   = findTupleArities kindInfo
-        hasOverflows   = (not . null) [() | (_ :: OvOp) <- G.universeBi allTopOps]
-        hasQuantBools  = (not . null) [() | QuantifiedBool{} <- G.universeBi allTopOps]
+        hasOverflows   = (not . null) [() | (_ :: OvOp) <- G.universeBi scannedOps]
+        hasQuantBools  = any isQuantifiedBool allTopOps
         hasList        = any isList kindInfo
         hasSets        = any isSet kindInfo
         hasTuples      = not . null $ tupleArities

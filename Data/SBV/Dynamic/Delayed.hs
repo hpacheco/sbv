@@ -13,12 +13,16 @@
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE PatternSynonyms        #-}
 {-# LANGUAGE ScopedTypeVariables    #-}
 {-# LANGUAGE ViewPatterns           #-}
 
 module Data.SBV.Dynamic.Delayed
   ( -- * The delayed AST and its operators
-    SExprF(..)
+    SExprF(SConst,SVal)
+  , pattern SOp1
+  , pattern SOp2
+  , pattern SOpn
   , SDelayedOps(..)
   , SDOp1(..)
   , SDOp2(..)
@@ -92,6 +96,7 @@ module Data.SBV.Dynamic.Delayed
   , sdConstrainQuantifiedWith
   ) where
 
+import qualified Data.Foldable as F
 import Data.IntSet               (IntSet)
 import qualified Data.IntSet as IntSet
 import GHC.Generics               (Generic)
@@ -117,10 +122,26 @@ import Data.SBV.Dynamic.KindArith
 data SExprF o1 o2 on
     = SConst CV
     | SVal SVal
-    | SOp1 o1 (SExprF o1 o2 on)
-    | SOp2 o2 (SExprF o1 o2 on) (SExprF o1 o2 on)
-    | SOpn on [SExprF o1 o2 on]
+    | SOp1_ o1 (SExprF o1 o2 on) SVal
+    | SOp2_ o2 (SExprF o1 o2 on) (SExprF o1 o2 on) SVal
+    | SOpn_ on [SExprF o1 o2 on] SVal
   deriving (Show,Generic)
+
+-- The operator nodes carry their lowering as a lazy field, so that a node shared by many parents is lowered
+-- once: a plain recursion in 'toSVal' walks a shared expression as a tree and builds one 'SVal' per path.
+pattern SOp1 :: SDelayedOps o1 o2 on => o1 -> SExprF o1 o2 on -> SExprF o1 o2 on
+pattern SOp1 o e <- SOp1_ o e _ where
+    SOp1 o e = SOp1_ o e (lower (SOp1_ o e undefined))
+
+pattern SOp2 :: SDelayedOps o1 o2 on => o2 -> SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on
+pattern SOp2 o x y <- SOp2_ o x y _ where
+    SOp2 o x y = SOp2_ o x y (lower (SOp2_ o x y undefined))
+
+pattern SOpn :: SDelayedOps o1 o2 on => on -> [SExprF o1 o2 on] -> SExprF o1 o2 on
+pattern SOpn o es <- SOpn_ o es _ where
+    SOpn o es = SOpn_ o es (lower (SOpn_ o es undefined))
+
+{-# COMPLETE SConst, SVal, SOp1, SOp2, SOpn #-}
 
 -- | What the delayed layer needs to know about a consumer's operator labels.
 class SDelayedOps o1 o2 on | o1 -> o2 on, o2 -> o1 on, on -> o1 o2 where
@@ -220,11 +241,24 @@ svalToCV _ = Nothing
 toSVal :: SDelayedOps o1 o2 on => SExprF o1 o2 on -> SVal
 toSVal (SConst cv) = CS.SVal (kindOf cv) (Left cv)
 toSVal (SVal sv) = sv
-toSVal (SOp1 o e) | sdIsNot o = svNot (toSVal e)
-toSVal (SOp2 o x y) | sdIsCmp o = sdCmpSVal o (toSVal x) (toSVal y)
-toSVal (SOpn o es) | sdIsAnd o = foldl svAnd svTrue (map toSVal es)
-toSVal (SOpn o es) | sdIsOr o = foldl svOr svFalse (map toSVal es)
-toSVal _ = error "Data.SBV.Dynamic.Delayed: toSVal on an unmodelled delayed node"
+toSVal (SOp1_ _ _ v) = v
+toSVal (SOp2_ _ _ _ v) = v
+toSVal (SOpn_ _ _ v) = v
+
+-- | A balanced fold, so that lowering a long conjunction (disjunction) is not as deep as it is long.
+balanced :: (a -> a -> a) -> a -> [a] -> a
+balanced _ z [] = z
+balanced _ _ [x] = x
+balanced f z xs = f (balanced f z l) (balanced f z r)
+  where (l,r) = splitAt (length xs `div` 2) xs
+
+-- | The lowering of an operator node, from the (memoised) lowerings of its children.
+lower :: SDelayedOps o1 o2 on => SExprF o1 o2 on -> SVal
+lower (SOp1_ o e _) | sdIsNot o = svNot (toSVal e)
+lower (SOp2_ o x y _) | sdIsCmp o = sdCmpSVal o (toSVal x) (toSVal y)
+lower (SOpn_ o es _) | sdIsAnd o = balanced svAnd svTrue (map toSVal es)
+lower (SOpn_ o es _) | sdIsOr o = balanced svOr svFalse (map toSVal es)
+lower _ = error "Data.SBV.Dynamic.Delayed: toSVal on an unmodelled delayed node"
 
 -- | Lift an 'SVal'.
 fromSVal :: SVal -> SExprF o1 o2 on
@@ -292,23 +326,25 @@ cvToInteger cv = error $ "Data.SBV.Dynamic.Delayed: expected an integral CV, got
 -----------------------------------------------------------------------------
 -- Boolean algebra.
 
+-- The connectives keep their operands as they are: flattening a conjunction into another copies its operands into a
+-- new node, lowered anew, so a conjunction extended step by step (a chain, a running prefix) is quadratic.
 andSBV :: SDelayedOps o1 o2 on => SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on
-andSBV (SOpn (sdIsAnd -> True) xs) (SOpn (sdIsAnd -> True) ys) = SOpn sdAnd (xs ++ ys)
-andSBV (SOpn (sdIsAnd -> True) xs) y = SOpn sdAnd (y : xs)
-andSBV x (SOpn (sdIsAnd -> True) ys) = SOpn sdAnd (x : ys)
 andSBV x y = SOpn sdAnd [x,y]
 
 andsSBV :: (Foldable t,SDelayedOps o1 o2 on) => t (SExprF o1 o2 on) -> SExprF o1 o2 on
-andsSBV = foldl andSBV trueSBV
+andsSBV xs = case F.toList xs of
+    [] -> trueSBV
+    [x] -> x
+    ys -> SOpn sdAnd ys
 
 orSBV :: SDelayedOps o1 o2 on => SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on
-orSBV (SOpn (sdIsOr -> True) xs) (SOpn (sdIsOr -> True) ys) = SOpn sdOr (xs ++ ys)
-orSBV (SOpn (sdIsOr -> True) xs) y = SOpn sdOr (y : xs)
-orSBV x (SOpn (sdIsOr -> True) ys) = SOpn sdOr (x : ys)
 orSBV x y = SOpn sdOr [x,y]
 
 orsSBV :: (Foldable t,SDelayedOps o1 o2 on) => t (SExprF o1 o2 on) -> SExprF o1 o2 on
-orsSBV = foldl orSBV falseSBV
+orsSBV xs = case F.toList xs of
+    [] -> falseSBV
+    [x] -> x
+    ys -> SOpn sdOr ys
 
 -- | De Morgan, pushed as far in as it goes.
 notSBV :: SDelayedOps o1 o2 on => SExprF o1 o2 on -> SExprF o1 o2 on
@@ -327,7 +363,7 @@ equivSBV x y = SOp2 sdEq x y
 -----------------------------------------------------------------------------
 -- Comparisons
 
-compareSBV :: o2 -> SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on
+compareSBV :: SDelayedOps o1 o2 on => o2 -> SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on
 compareSBV op e1 e2 = SOp2 op e1 e2
 
 compareCastSBV :: SDelayedOps o1 o2 on => o2 -> SExprF o1 o2 on -> SExprF o1 o2 on -> SExprF o1 o2 on

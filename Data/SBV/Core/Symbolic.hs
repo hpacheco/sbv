@@ -93,7 +93,6 @@ import qualified Control.Monad.Writer.Lazy   as LW
 import qualified Control.Monad.Writer.Strict as SW
 import qualified Data.IORef                  as R    (modifyIORef')
 import qualified Data.Generics               as G    (Data(..))
-import qualified Data.Generics.Uniplate.Data as G
 import qualified Data.IntMap.Strict          as IMap (IntMap, empty, lookup, insertWith)
 import qualified Data.Map.Strict             as Map  (Map, empty, toList, lookup, insert, size, keysSet)
 import qualified Data.Set                    as Set  (Set, empty, toList, insert, member, notMember)
@@ -112,7 +111,6 @@ import Data.SBV.Utils.TDiff   (Timing)
 import Data.SBV.Utils.Lib     (stringToQFS, checkObservableName, barify, mapToSortedList, showText)
 import Data.SBV.Utils.Numeric (RoundingMode)
 
-import Data.Containers.ListUtils (nubOrd)
 
 import Data.SBV.Control.Types
 
@@ -2014,12 +2012,14 @@ runSymbolicInState st (SymbolicT c) = do
    res <- liftIO $ extractSymbolicSimulationState st
 
    -- Check that the state wasn't clobbered in any way
-   let check ctx | ctx == sbvContext st || ctx == globalSBVContext
-                 = pure ()
-                 | True
-                 = contextMismatchError (sbvContext st) ctx
-
-   mapM_ check $ nubOrd $ G.universeBi res
+   -- Disabled: universeBi walks the whole result, including each QuantifiedBool's Text body char by char,
+   -- which costs several times the program's memory on large quantified queries.
+   -- let check ctx | ctx == sbvContext st || ctx == globalSBVContext
+   --               = pure ()
+   --               | True
+   --               = contextMismatchError (sbvContext st) ctx
+   --
+   -- mapM_ check $ nubOrd $ G.universeBi res
 
    pure (r, res)
 
